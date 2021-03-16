@@ -12,6 +12,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
+
 // Wifi connection configuration
 const char *ssid = "";
 const char *password = "";
