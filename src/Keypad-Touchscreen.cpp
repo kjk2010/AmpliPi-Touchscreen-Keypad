@@ -14,7 +14,7 @@
 
 
 // Wifi connection configuration
-const char *ssid = "";
+const char *ssid = "";// TODO: Need to move this to a config file
 const char *password = "";
 
 // AmpliPi connection configuration
@@ -38,9 +38,27 @@ TFT_eSPI tft = TFT_eSPI(); // Invoke TFT display library
 #define GREY 0x5AEB
 #define BLUE 0x9DFF
 
+// Source bar location
+#define SRCBAR_X 0
+#define SRCBAR_Y 0
+#define SRCBAR_W 240
+#define SRCBAR_H 36
+
+// Main area, normally where metadata is shown
+#define MAINZONE_X 0
+#define MAINZONE_Y 36
+#define MAINZONE_W 240
+#define MAINZONE_H 220
+
 // Album art location
 #define ALBUMART_X 60
-#define ALBUMART_Y 30
+#define ALBUMART_Y 36
+
+// Warning zone
+#define WARNZONE_X 0
+#define WARNZONE_Y 260
+#define WARNZONE_W 240
+#define WARNZONE_H 20
 
 // Mute button location
 #define MUTE_X 0
@@ -71,6 +89,7 @@ bool updateMute = true;
 bool mute = false;
 float volPercent = 100;
 bool updateVol = true;
+bool metadata_refresh = true;
 
 
 void touch_calibrate()
@@ -164,6 +183,27 @@ uint32_t read32(fs::File &f)
     ((uint8_t *)&result)[3] = f.read(); // MSB
     return result;
 }
+
+
+void clearMainArea()
+{
+    tft.fillRect(MAINZONE_X, MAINZONE_Y, MAINZONE_W, MAINZONE_H, TFT_BLACK); // Clear metadata area
+}
+
+
+void drawWarning(String message)
+{
+    tft.fillRect(WARNZONE_X, WARNZONE_Y, WARNZONE_W, WARNZONE_H, TFT_BLACK); // Clear warning area
+    tft.setCursor(5, WARNZONE_Y, 2);
+    Serial.print("Warning: ");
+    Serial.println(message);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.setFreeFont(FSS9);
+    tft.println(message);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setFreeFont(FSS12);
+}
+
 
 void drawBmp(const char *filename, int16_t x, int16_t y)
 {
@@ -315,6 +355,7 @@ bool downloadAlbumart(String streamID)
     else
     {
         Serial.println("[HTTP] GET... failed, error: " + http.errorToString(httpCode));
+        drawWarning("Unable to access AmpliPi");
         outcome = false;
     }
     http.end();
@@ -324,10 +365,11 @@ bool downloadAlbumart(String streamID)
 
 void drawAlbumart()
 {
+    // Only update album art on screen if we need
     if (!updateAlbumart)
     {
         return;
-    }; // Only update album art on screen if we need to
+    };
     drawBmp("/albumart.bmp", ALBUMART_X, ALBUMART_Y);
     updateAlbumart = false;
 }
@@ -335,17 +377,85 @@ void drawAlbumart()
 
 void drawSource()
 {
+    // Only update source on screen if we need
     if (!updateSource)
     {
         return;
-    }; // Only update source on screen if we need to
+    };
 
-    tft.fillRect(0, 0, 320, ALBUMART_Y, TFT_BLACK); // Clear metadata area first
+    clearMainArea();
     tft.setFreeFont(FSS9);
     tft.setTextDatum(TL_DATUM);
-    tft.drawString(sourceName, 2, 3, GFXFF); // Top Left
+    tft.drawString(sourceName, 2, 5, GFXFF); // Top Left
+    drawBmp("/source.bmp", (SRCBAR_W - 36), SRCBAR_Y);
 
     updateSource = false;
+}
+
+
+void drawSourceSelection()
+{
+    // Download source options
+
+
+    // Stop metadata refresh
+    metadata_refresh = false;
+
+    // Clear screen
+    clearMainArea();
+
+    // Show options
+
+
+}
+
+
+void selectSource()
+{
+    // Send source selection (or cancel?)
+
+
+    // Clear screen
+    clearMainArea();
+
+    // Restart metadata refresh
+    metadata_refresh = true;
+}
+
+
+void drawSettings()
+{
+    // Available settings:
+    // - Select zone, zones, or group to manage
+    // - Reset WiFi settings (delete 'wifi.json' config file and reboot, or enable web server to select AP)
+    // - Restart
+    // - Show version, Wifi AP, IP address
+
+    // Stop metadata refresh
+    metadata_refresh = false;
+
+    // Clear screen
+    clearMainArea();
+    
+    // Show settings
+
+
+}
+
+
+void saveSettings()
+{
+    // Save settings
+
+
+    // Clear screen
+    clearMainArea();
+
+    // Reboot if requested
+
+
+    // Restart metadata refresh
+    metadata_refresh = true;
 }
 
 
@@ -382,6 +492,7 @@ String requestAPI(String request)
     else
     {
         Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        drawWarning("Unable to access AmpliPi");
     }
 
     http.end();
@@ -428,6 +539,7 @@ bool patchAPI(String request, String payload)
     else
     {
         Serial.printf("[HTTP] PATCH... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        drawWarning("Unable to access AmpliPi");
     }
 
     http.end();
@@ -518,7 +630,7 @@ void drawMuteBtn()
 }
 
 
-
+// Split a string by a separator
 String getValue(String data, char separator, int index)
 {
     int found = 0;
@@ -705,6 +817,7 @@ void getStream(int sourceID)
         currentStatus = streamStatus;
     }
 
+    // Download and refresh album art if it has changed
     if (albumArt != currentAlbumArt)
     {
         currentAlbumArt = albumArt;
@@ -713,7 +826,7 @@ void getStream(int sourceID)
         drawAlbumart();
     }
 
-    
+    // Update source name if it has changed
     if (streamName != sourceName)
     {
         sourceName = streamName;
@@ -736,7 +849,7 @@ void setup(void)
     // Wrap test at right and bottom of screen
     tft.setTextWrap(true, true);
 
-    tft.setFreeFont(FSS12);
+    tft.setFreeFont(FSS18);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
     // call screen calibration
@@ -745,11 +858,17 @@ void setup(void)
     // clear screen
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
-    tft.setCursor(0, 20, 2);
+    tft.setCursor(60, 40, 2);
 
     Serial.print("Connecting to ");
     Serial.println(ssid);
-    tft.println("Welcome to AmpliPi");
+    tft.print("Ampli");
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.println("Pi");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setFreeFont(FSS12);
+    tft.println("");
+    tft.println("Welcome");
     tft.println("");
     tft.println("Connecting to WiFi...");
 
@@ -833,10 +952,12 @@ void loop()
 
     if (millis() - lastRefreshTime >= REFRESH_INTERVAL)
     {
-        Serial.println("Refreshing metadata");
-        lastRefreshTime += REFRESH_INTERVAL;
-        getStream(amplipiSource);
-        getZone();
+        if (metadata_refresh) {
+            Serial.println("Refreshing metadata");
+            lastRefreshTime += REFRESH_INTERVAL;
+            getStream(amplipiSource);
+            getZone();
+        }
     }
 }
 //------------------------------------------------------------------------------------------
