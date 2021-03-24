@@ -27,12 +27,15 @@ Built using VS Code with Platform.IO.
 
 
 #### To do items
-- [ ] Add WifiManager to configure Wifi AP settings, and move Wifi settings to config file
+- [x] Add WifiManager to configure Wifi AP settings, and move Wifi settings to config file - 90% complete
 - [ ] Add source selection screen
 - [ ] Add settings screen
+- [ ] Add POE and Ethernet capabilities, utilizing Olimex's ESP32-POE board
 - [ ] Move zone selection to settings screen and save to config file. Include support for expansion units (more than 6 output zones)
-- [ ] Add preset functionality
+- [ ] Screen time out options (PIR, touch, screensaver showing full screen only metadata?)
+- [ ] Add AmpliPi preset functionality
 
 
 #### Future features
-- Integrate Home Assistant control options
+- Add OTA upgrades
+- Integrate Home Assistant control options on a second screen

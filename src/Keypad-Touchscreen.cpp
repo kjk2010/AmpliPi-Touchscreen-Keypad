@@ -4,36 +4,27 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include "FS.h"
-#include "SPIFFS.h" // For ESP32 only
+#include "SPIFFS.h"
 #include "Free_Fonts.h"
+#include <esp_wifi.h>
 #include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiMulti.h>
+WiFiMulti wifiMulti;
+
 #include <SPI.h>
 #include <TFT_eSPI.h> // Hardware-specific library
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 
-// Wifi connection configuration
-const char *ssid = "";// TODO: Need to move this to a config file
-const char *password = "";
-
-// AmpliPi connection configuration
-const String amplipiHost = "192.168.2.136";
-const int amplipiSource = 0;
-const int amplipiZone = 0;
+/* Debug options */
+#define DEBUGAPIREQ false
 
 
-TFT_eSPI tft = TFT_eSPI(); // Invoke TFT display library
-
-// This is the file name used to store the touch coordinate
-// calibration data. Cahnge the name to start a new calibration.
-#define CALIBRATION_FILE "/TouchCalData"
-
-// Set REPEAT_CAL to true instead of false to run calibration
-// again, otherwise it will only be done once.
-// Repeat calibration if you change the screen rotation.
-#define REPEAT_CAL false
-
+/**************************************/
+/* Configure screen colors and layout */
+/**************************************/
 // Colors
 #define GREY 0x5AEB
 #define BLUE 0x9DFF
@@ -78,11 +69,114 @@ TFT_eSPI tft = TFT_eSPI(); // Invoke TFT display library
 #define VOLBARZONE_W 160
 #define VOLBARZONE_H 40
 
+
+/******************************/
+/* Configure system variables */
+/******************************/
+TFT_eSPI tft = TFT_eSPI(); // Invoke TFT display library
+
+// This is the file name used to store the touch coordinate
+// calibration data. Cahnge the name to start a new calibration.
+#define CALIBRATION_FILE "/TouchCalData"
+
+// Set REPEAT_CAL to true instead of false to run calibration
+// again, otherwise it will only be done once.
+// Repeat calibration if you change the screen rotation.
+#define REPEAT_CAL false
+
+
+/******************************/
+/* Configure WiFiManager */
+/******************************/
+// Must have ESPAsync_WiFiManager v1.6.0 or greater
+#define ESP_ASYNC_WIFIMANAGER_VERSION_MIN_TARGET     "ESPAsync_WiFiManager v1.6.0"
+
+// Use from 0 to 4. Higher number, more debugging messages and memory usage.
+#define _ESPASYNC_WIFIMGR_LOGLEVEL_    3
+
+// For ESPAsync_WiFiManager:
+#define USE_LITTLEFS      false
+#define USE_SPIFFS        true
+#define FileFS            SPIFFS
+#define FS_Name           "SPIFFS"
+#define ESP_getChipId()   ((uint32_t)ESP.getEfuseMac())
+#define LED_BUILTIN       2
+#define LED_ON            HIGH
+#define LED_OFF           LOW
+#define PIN_LED           LED_BUILTIN
+
+char configFileName[] = "/config.json";
+
+String Router_SSID;
+String Router_Pass;
+
+#define MIN_AP_PASSWORD_SIZE    8
+#define SSID_MAX_LEN            32
+#define PASS_MAX_LEN            64
+
+typedef struct
+{
+  char wifi_ssid[SSID_MAX_LEN];
+  char wifi_pw  [PASS_MAX_LEN];
+}  WiFi_Credentials;
+
+typedef struct
+{
+  String wifi_ssid;
+  String wifi_pw;
+}  WiFi_Credentials_String;
+
+#define NUM_WIFI_CREDENTIALS      2
+
+typedef struct
+{
+  WiFi_Credentials  WiFi_Creds [NUM_WIFI_CREDENTIALS];
+} WM_Config;
+
+WM_Config         WM_config;
+
+#define  CONFIG_FILENAME              F("/wifi_cred.dat")
+
+// Indicates whether ESP has WiFi credentials saved from previous session, or double reset detected
+bool initialConfig = false;
+
+// SSID and PW for Config Portal
+String AP_SSID;
+String AP_PASS;
+
+// Use false to disable NTP config. Advisable when using Cellphone, Tablet to access Config Portal.
+// See Issue 23: On Android phone ConfigPortal is unresponsive (https://github.com/khoih-prog/ESP_WiFiManager/issues/23)
+#define USE_ESP_WIFIMANAGER_NTP     false
+
+// Use true to enable CloudFlare NTP service. System can hang if you don't have Internet access while accessing CloudFlare
+// See Issue #21: CloudFlare link in the default portal (https://github.com/khoih-prog/ESP_WiFiManager/issues/21)
+#define USE_CLOUDFLARE_NTP          false
+
+// New in v1.0.11
+#define USING_CORS_FEATURE          true
+
+#include <ESPAsync_WiFiManager.h>              //https://github.com/khoih-prog/ESPAsync_WiFiManager
+
+#define HTTP_PORT           80
+
+#define AMPLIPIHOST_LEN     64
+#define AMPLIPIZONE_LEN     6
+char amplipiHost [AMPLIPIHOST_LEN] = "amplipi.local"; // Default settings
+char amplipiZone1 [AMPLIPIZONE_LEN] = "0";
+char amplipiZone2 [AMPLIPIZONE_LEN] = "null";
+
+
+/******************************/
+/* Configure system variables */
+/******************************/
 String sourceName = "";
 String currentArtist = "";
 String currentSong = "";
 String currentStatus = "";
 String currentAlbumArt = "";
+bool inWarning = false;
+int amplipiSource = 0;
+int amplipiZone = 0;
 bool updateAlbumart = true;
 bool updateSource = false;
 bool updateMute = true;
@@ -92,6 +186,294 @@ bool updateVol = true;
 bool metadata_refresh = true;
 
 
+/***********************/
+/* Configure functions */
+/***********************/
+
+// WiFiManager functions
+
+///////////////////////////////////////////
+
+uint8_t connectMultiWiFi()
+{
+#define WIFI_MULTI_1ST_CONNECT_WAITING_MS           0L
+#define WIFI_MULTI_CONNECT_WAITING_MS               100L
+  
+  uint8_t status;
+
+  LOGERROR(F("ConnectMultiWiFi with :"));
+  
+  if ( (Router_SSID != "") && (Router_Pass != "") )
+  {
+    LOGERROR3(F("* Flash-stored Router_SSID = "), Router_SSID, F(", Router_Pass = "), Router_Pass );
+  }
+
+  for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++)
+  {
+    // Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
+    if ( (String(WM_config.WiFi_Creds[i].wifi_ssid) != "") && (strlen(WM_config.WiFi_Creds[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE) )
+    {
+      LOGERROR3(F("* Additional SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
+    }
+  }
+  
+  LOGERROR(F("Connecting MultiWifi..."));
+
+  WiFi.mode(WIFI_STA);
+
+  int i = 0;
+  status = wifiMulti.run();
+  delay(WIFI_MULTI_1ST_CONNECT_WAITING_MS);
+
+  while ( ( i++ < 20 ) && ( status != WL_CONNECTED ) )
+  {
+    status = wifiMulti.run();
+
+    if ( status == WL_CONNECTED )
+      break;
+    else
+      delay(WIFI_MULTI_CONNECT_WAITING_MS);
+  }
+
+  if ( status == WL_CONNECTED )
+  {
+    LOGERROR1(F("WiFi connected after time: "), i);
+    LOGERROR3(F("SSID:"), WiFi.SSID(), F(",RSSI="), WiFi.RSSI());
+    LOGERROR3(F("Channel:"), WiFi.channel(), F(",IP address:"), WiFi.localIP() );
+  }
+  else
+    LOGERROR(F("WiFi not connected"));
+
+  return status;
+}
+
+//flag for saving data
+bool shouldSaveConfig = false;
+
+//callback notifying us of the need to save config
+void saveConfigCallback()
+{
+  Serial.println(F("Should save config"));
+  shouldSaveConfig = true;
+}
+
+bool loadFileFSConfigFile()
+{
+  //clean FS, for testing
+  //FileFS.format();
+
+  //read configuration from FS json
+  Serial.println(F("Mounting FS..."));
+
+  if (FileFS.begin())
+  {
+    Serial.println(F("Mounted file system"));
+
+    if (FileFS.exists(configFileName))
+    {
+      //file exists, reading and loading
+      Serial.println(F("Reading config file"));
+      File configFile = FileFS.open(configFileName, "r");
+
+      if (configFile)
+      {
+        Serial.print(F("Opened config file, size = "));
+        size_t configFileSize = configFile.size();
+        Serial.println(configFileSize);
+
+        // Allocate a buffer to store contents of the file.
+        std::unique_ptr<char[]> buf(new char[configFileSize + 1]);
+
+        configFile.readBytes(buf.get(), configFileSize);
+
+        Serial.print(F("\nJSON parseObject() result : "));
+
+        DynamicJsonDocument json(1024);
+        auto deserializeError = deserializeJson(json, buf.get(), configFileSize);
+
+        if ( deserializeError )
+        {
+          Serial.println(F("failed"));
+          return false;
+        }
+        else
+        {
+          Serial.println(F("OK"));
+
+          if (json["amplipiHost"])
+            strncpy(amplipiHost,  json["amplipiHost"],  sizeof(amplipiHost));
+         
+          if (json["amplipiZone1"])
+            strncpy(amplipiZone1, json["amplipiZone1"], sizeof(amplipiZone1));
+ 
+          if (json["amplipiZone2"])
+            strncpy(amplipiZone2, json["amplipiZone2"], sizeof(amplipiZone2));
+        }
+
+        //serializeJson(json, Serial);
+        serializeJsonPretty(json, Serial);
+
+        configFile.close();
+      }
+    }
+  }
+  else
+  {
+    Serial.println(F("failed to mount FS"));
+    return false;
+  }
+  return true;
+}
+
+bool saveFileFSConfigFile()
+{
+  Serial.println(F("Saving config"));
+
+  DynamicJsonDocument json(1024);
+
+  json["amplipiHost"]  = amplipiHost;
+  json["amplipiZone1"] = amplipiZone1;
+  json["amplipiZone2"] = amplipiZone2;
+
+  File configFile = FileFS.open(configFileName, "w");
+
+  if (!configFile)
+  {
+    Serial.println(F("Failed to open config file for writing"));
+
+    return false;
+  }
+
+  serializeJsonPretty(json, Serial);
+  // Write data to file and close it
+  serializeJson(json, configFile);
+
+  configFile.close();
+  //end save
+
+  return true;
+}
+
+void toggleLED()
+{
+  //toggle state
+  digitalWrite(PIN_LED, !digitalRead(PIN_LED));
+}
+
+void heartBeatPrint()
+{
+  static int num = 1;
+
+  if (WiFi.status() == WL_CONNECTED)
+    Serial.print(F("H"));        // H means connected to WiFi
+  else
+    Serial.print(F("F"));        // F means not connected to WiFi
+
+  if (num == 80)
+  {
+    Serial.println();
+    num = 1;
+  }
+  else if (num++ % 10 == 0)
+  {
+    Serial.print(F(" "));
+  }
+}
+
+void check_WiFi()
+{
+  if ( (WiFi.status() != WL_CONNECTED) )
+  {
+    Serial.println(F("\nWiFi lost. Calling connectMultiWiFi in loop"));
+    connectMultiWiFi();
+  }
+}  
+
+void check_status()
+{
+  static ulong checkstatus_timeout  = 0;
+  static ulong LEDstatus_timeout    = 0;
+  static ulong checkwifi_timeout    = 0;
+
+  static ulong current_millis;
+
+#define WIFICHECK_INTERVAL    1000L
+#define LED_INTERVAL          2000L
+#define HEARTBEAT_INTERVAL    10000L
+
+  current_millis = millis();
+  
+  // Check WiFi every WIFICHECK_INTERVAL (1) seconds.
+  if ((current_millis > checkwifi_timeout) || (checkwifi_timeout == 0))
+  {
+    check_WiFi();
+    checkwifi_timeout = current_millis + WIFICHECK_INTERVAL;
+  }
+
+  if ((current_millis > LEDstatus_timeout) || (LEDstatus_timeout == 0))
+  {
+    // Toggle LED at LED_INTERVAL = 2s
+    toggleLED();
+    LEDstatus_timeout = current_millis + LED_INTERVAL;
+  }
+
+  // Print hearbeat every HEARTBEAT_INTERVAL (10) seconds.
+  if ((current_millis > checkstatus_timeout) || (checkstatus_timeout == 0))
+  {
+    heartBeatPrint();
+    checkstatus_timeout = current_millis + HEARTBEAT_INTERVAL;
+  }
+}
+
+bool loadConfigData()
+{
+
+  if (FileFS.exists(CONFIG_FILENAME))
+  {
+    File file = FileFS.open(CONFIG_FILENAME, "r");
+    LOGERROR(F("LoadWiFiCfgFile "));
+
+    memset(&WM_config,       0, sizeof(WM_config));
+
+    if (file)
+    {
+        file.readBytes((char *) &WM_config,   sizeof(WM_config));
+        file.close();
+        LOGERROR(F("OK"));
+        return true;
+    }
+    else {
+        return false;
+    }
+  }
+  else
+  {
+    LOGERROR(F("failed"));
+
+    return false;
+  }
+}
+    
+void saveConfigData()
+{
+  File file = FileFS.open(CONFIG_FILENAME, "w");
+  LOGERROR(F("SaveWiFiCfgFile "));
+
+  if (file)
+  {
+    file.write((uint8_t*) &WM_config,   sizeof(WM_config));
+    file.close();
+    LOGERROR(F("OK"));
+  }
+  else
+  {
+    LOGERROR(F("failed"));
+  }
+}
+
+
+// Function to handle touchscreen calibration. Calibration only runs once, unless 
+//  TouchCalData file is removed or REPEAT_CAL is set to true
 void touch_calibrate()
 {
     uint16_t calData[5];
@@ -166,6 +548,7 @@ void touch_calibrate()
     }
 }
 
+// Function used for processing BMP images
 uint16_t read16(fs::File &f)
 {
     uint16_t result;
@@ -174,6 +557,7 @@ uint16_t read16(fs::File &f)
     return result;
 }
 
+// Function used for processing BMP images
 uint32_t read32(fs::File &f)
 {
     uint32_t result;
@@ -185,12 +569,14 @@ uint32_t read32(fs::File &f)
 }
 
 
+// Clear the main area of the screen. Generally metadata is shown here, but also source select and settings
 void clearMainArea()
 {
     tft.fillRect(MAINZONE_X, MAINZONE_Y, MAINZONE_W, MAINZONE_H, TFT_BLACK); // Clear metadata area
 }
 
 
+// Show a warning near bottom of screen. Primarily used if we can't access AmpliPi API
 void drawWarning(String message)
 {
     tft.fillRect(WARNZONE_X, WARNZONE_Y, WARNZONE_W, WARNZONE_H, TFT_BLACK); // Clear warning area
@@ -202,9 +588,17 @@ void drawWarning(String message)
     tft.println(message);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setFreeFont(FSS12);
+    inWarning = true;
+}
+
+void clearWarning()
+{
+    tft.fillRect(WARNZONE_X, WARNZONE_Y, WARNZONE_W, WARNZONE_H, TFT_BLACK); // Clear warning area
+    inWarning = false;
 }
 
 
+// Show the album art file on screen
 void drawBmp(const char *filename, int16_t x, int16_t y)
 {
 
@@ -284,7 +678,7 @@ bool downloadAlbumart(String streamID)
 {
     HTTPClient http;
     bool outcome = true;
-    String url = "http://" + amplipiHost + "/api/streams/image/" + streamID;
+    String url = "http://" + String(amplipiHost) + "/api/streams/image/" + streamID;
     String filename = "/albumart.bmp";
 
     // configure server and url
@@ -293,7 +687,9 @@ bool downloadAlbumart(String streamID)
     // start connection and send HTTP header
     int httpCode = http.GET();
 
+#if DEBUGAPIREQ
     Serial.println(("[HTTP] GET DONE with code " + String(httpCode)));
+#endif
 
     if (httpCode > 0)
     {
@@ -307,9 +703,11 @@ bool downloadAlbumart(String streamID)
             return false;
         }
 
+#if DEBUGAPIREQ
         // HTTP header has been sent and Server response header has been handled
         Serial.printf("-[HTTP] GET... code: %d\n", httpCode);
         Serial.println("Free Heap: " + String(ESP.getFreeHeap()));
+#endif
 
         // file found at server
         if (httpCode == HTTP_CODE_OK)
@@ -318,7 +716,9 @@ bool downloadAlbumart(String streamID)
             int total = http.getSize();
             int len = total;
 
+#if DEBUGAPIREQ
             Serial.println("HTTP SIZE IS " + String(total));
+#endif
 
             // create buffer for read
             uint8_t buff[128] = {0};
@@ -348,13 +748,16 @@ bool downloadAlbumart(String streamID)
                 delay(1);
             }
 
+#if DEBUGAPIREQ
             Serial.println("[HTTP] connection closed or file end.");
+#endif
         }
         f.close();
     }
     else
     {
         Serial.println("[HTTP] GET... failed, error: " + http.errorToString(httpCode));
+
         drawWarning("Unable to access AmpliPi");
         outcome = false;
     }
@@ -363,6 +766,7 @@ bool downloadAlbumart(String streamID)
 }
 
 
+// Show downloaded album art of screen
 void drawAlbumart()
 {
     // Only update album art on screen if we need
@@ -370,11 +774,13 @@ void drawAlbumart()
     {
         return;
     };
+    tft.fillRect(ALBUMART_X, ALBUMART_Y, 120, 120, TFT_BLACK); // Clear album art first
     drawBmp("/albumart.bmp", ALBUMART_X, ALBUMART_Y);
     updateAlbumart = false;
 }
 
 
+// Show the current source on screen, top left (by default)
 void drawSource()
 {
     // Only update source on screen if we need
@@ -383,9 +789,9 @@ void drawSource()
         return;
     };
 
-    clearMainArea();
     tft.setFreeFont(FSS9);
     tft.setTextDatum(TL_DATUM);
+    tft.fillRect(SRCBAR_X, SRCBAR_Y, SRCBAR_W, SRCBAR_H, TFT_BLACK); // Clear source bar first
     tft.drawString(sourceName, 2, 5, GFXFF); // Top Left
     drawBmp("/source.bmp", (SRCBAR_W - 36), SRCBAR_Y);
 
@@ -464,29 +870,42 @@ String requestAPI(String request)
 {
     HTTPClient http;
 
-    String url = "http://" + amplipiHost + "/api/" + request;
+    String url = "http://" + String(amplipiHost) + "/api/" + request;
     String payload;
 
+#if DEBUGAPIREQ
     Serial.print("[HTTP] begin...\n");
+    Serial.print("[HTTP] GET...\n");
+#endif
     http.setConnectTimeout(5000);
     http.setTimeout(10000);
     http.begin(url); //HTTP
 
-    Serial.print("[HTTP] GET...\n");
     // start connection and send HTTP header
     int httpCode = http.GET();
 
     // httpCode will be negative on error
     if (httpCode > 0)
     {
+#if DEBUGAPIREQ
         // HTTP header has been send and Server response header has been handled
         Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+#endif
 
         // file found at server
         if (httpCode == HTTP_CODE_OK)
         {
             payload = http.getString();
+
+#if DEBUGAPIREQ
             Serial.println(payload);
+#endif
+
+            // Clear the warning since we jsut received a successful API request
+            if (inWarning)
+            {
+                clearWarning();
+            }
         }
     }
     else
@@ -508,33 +927,47 @@ bool patchAPI(String request, String payload)
 
     bool result = false;
 
-    String url = "http://" + amplipiHost + "/api/" + request;
+    String url = "http://" + String(amplipiHost) + "/api/" + request;
 
+#if DEBUGAPIREQ
     Serial.print("[HTTP] begin...\n");
+    Serial.print("[HTTP] PATCH...\n");
+#endif
+
     http.setConnectTimeout(5000);
     http.setTimeout(10000);
     http.begin(url); //HTTP
     http.addHeader("Accept", "application/json");
     http.addHeader("Content-Type", "application/json");
 
-    Serial.print("[HTTP] PATCH...\n");
     // start connection and send HTTP header
     int httpCode = http.PATCH(payload);
 
     // httpCode will be negative on error
     if (httpCode > 0)
     {
+#if DEBUGAPIREQ
         // HTTP header has been send and Server response header has been handled
         Serial.printf("[HTTP] PATCH... code: %d\n", httpCode);
+#endif
 
         // file found at server
         if (httpCode == HTTP_CODE_OK)
         {
             result = true;
+
+            // Clear the warning since we jsut received a successful API request
+            if (inWarning)
+            {
+                clearWarning();
+            }
         }
         String resultPayload = http.getString();
+
+#if DEBUGAPIREQ
         Serial.println("[HTTP] PATCH result:");
         Serial.println(resultPayload);
+#endif
     }
     else
     {
@@ -802,8 +1235,8 @@ void getStream(int sourceID)
 
         tft.setTextDatum(TC_DATUM);
         tft.setFreeFont(FSS12);
-        tft.setCursor(3, 120, 2);
-        tft.fillRect(0, 120, 320, 130, TFT_BLACK); // Clear metadata area first
+        //tft.setCursor(3, 120, 2);
+        tft.fillRect(0, 157, 320, 125, TFT_BLACK); // Clear metadata area first
         tft.drawString(displaySong, 120, 165, GFXFF); // Center Middle
         tft.fillRect(20, 192, 200, 1, GREY);         // Seperator between song and artist
         tft.drawString(displayArtist, 120, 200, GFXFF);
@@ -840,7 +1273,9 @@ void getStream(int sourceID)
 void setup(void)
 {
     Serial.begin(115200);
-    Serial.println("Startup");
+    Serial.println("System Startup");
+
+    // Initialize screen
     tft.init();
 
     // Set the rotation before we calibrate
@@ -852,48 +1287,226 @@ void setup(void)
     tft.setFreeFont(FSS18);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
-    // call screen calibration
+    // Call screen calibration
+    //  This also handles formatting the filesystem if it hasn't been formatted yet
     touch_calibrate();
 
     // clear screen
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
     tft.setCursor(60, 40, 2);
+    tft.setFreeFont(FSS18);
 
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
     tft.print("Ampli");
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.println("Pi");
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setFreeFont(FSS12);
-    tft.println("");
+    tft.setCursor(70, 100, 2);
     tft.println("Welcome");
     tft.println("");
-    tft.println("Connecting to WiFi...");
 
-    // Wifi setup
-    WiFi.begin(ssid, password);
+    // Load config file from WifiManager. This gives up our Wifi settings and AmpliPi settings (if they've been set).
+    //  Otherwise, it starts the web server so the settings can be configured.
+    loadFileFSConfigFile();
+    ESPAsync_WMParameter custom_amplipiHost ("amplipiHost",  "amplipiHost",  amplipiHost,  AMPLIPIHOST_LEN + 1);
+    ESPAsync_WMParameter custom_amplipiZone1("amplipiZone1", "amplipiZone1", amplipiZone1, AMPLIPIZONE_LEN + 1);
+    ESPAsync_WMParameter custom_amplipiZone2("amplipiZone2", "amplipiZone2", amplipiZone2, AMPLIPIZONE_LEN + 1 );
+    unsigned long startedAt = millis();
+    
+    //Local intialization. Once its business is done, there is no need to keep it around
+    // Use this to default DHCP hostname to ESP8266-XXXXXX or ESP32-XXXXXX
+    //ESPAsync_WiFiManager ESPAsync_wifiManager(&webServer, &dnsServer);
+    // Use this to personalize DHCP hostname (RFC952 conformed)
+    AsyncWebServer webServer(HTTP_PORT);
 
-    while (WiFi.status() != WL_CONNECTED)
+    DNSServer dnsServer;
+  
+    ESPAsync_WiFiManager ESPAsync_wifiManager(&webServer, &dnsServer, "AutoConnect-FSParams");
+    
+    //set config save notify callback
+    ESPAsync_wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+    //add all your parameters here
+    ESPAsync_wifiManager.addParameter(&custom_amplipiHost);
+    ESPAsync_wifiManager.addParameter(&custom_amplipiZone1);
+    ESPAsync_wifiManager.addParameter(&custom_amplipiZone2);
+
+    //reset settings - for testing
+    //ESPAsync_wifiManager.resetSettings();
+
+    ESPAsync_wifiManager.setDebugOutput(true);
+
+    //set minimum quality of signal so it ignores AP's under that quality
+    //defaults to 8%
+    //ESPAsync_wifiManager.setMinimumSignalQuality();
+    ESPAsync_wifiManager.setMinimumSignalQuality(-1);
+
+    // From v1.0.10 only
+    // Set config portal channel, default = 1. Use 0 => random channel from 1-13
+    ESPAsync_wifiManager.setConfigPortalChannel(0);
+    //////
+
+#if USING_CORS_FEATURE
+    ESPAsync_wifiManager.setCORSHeader("Access-Control-Allow-Origin *");
+#endif
+
+    // We can't use WiFi.SSID() in ESP32 as it's only valid after connected.
+    // SSID and Password stored in ESP32 wifi_ap_record_t and wifi_config_t are also cleared in reboot
+    // Have to create a new function to store in EEPROM/SPIFFS/LittleFS for this purpose
+    Router_SSID = ESPAsync_wifiManager.WiFi_SSID();
+    Router_Pass = ESPAsync_wifiManager.WiFi_Pass();
+
+    //Remove this line if you do not want to see WiFi password printed
+    Serial.println("Connecting to self-stored SSID: " + Router_SSID);
+
+    bool configDataLoaded = false;
+
+    String chipID = String(ESP_getChipId(), HEX);
+    chipID.toUpperCase();
+
+    // SSID and PW for Config Portal
+    AP_SSID = chipID + "_AutoConnectAP";
+    AP_PASS = "amplipi";
+    
+    // Don't permit NULL password
+    if ( (Router_SSID != "") && (Router_Pass != "") )
     {
-        Serial.print(".");
-        delay(1000);
+        LOGERROR3(F("* Add SSID = "), Router_SSID, F(", PW = "), Router_Pass);
+        wifiMulti.addAP(Router_SSID.c_str(), Router_Pass.c_str());
+
+        ESPAsync_wifiManager.setConfigPortalTimeout(120); //If no access point name has been previously entered disable timeout.
+        Serial.println(F("Got ESP Self-Stored Credentials. Timeout 120s for Config Portal"));
     }
+    else if (loadConfigData())
+    {
+        configDataLoaded = true;
+
+        ESPAsync_wifiManager.setConfigPortalTimeout(120); //If no access point name has been previously entered disable timeout.
+        Serial.println(F("Got stored Credentials. Timeout 120s for Config Portal")); 
+    }
+    else
+    {
+        // Enter CP only if no stored SSID on flash and file 
+        Serial.println(F("Open Config Portal without Timeout: No stored Credentials."));
+        initialConfig = true;
+        tft.println("Configure WiFi by");
+        tft.println("connecting to:");
+        tft.setFreeFont(FSS9);
+        tft.println("");
+        tft.print("SSID: ");
+        tft.println(AP_SSID.c_str());
+        tft.print("Pass: ");
+        tft.println(AP_PASS.c_str());
+    }
+
+    if (initialConfig)
+    {
+        Serial.println(F("We don't have any access point credentials, so get them now"));
+
+        // Starts an access point
+        //if (!ESPAsync_wifiManager.startConfigPortal((const char *) ssid.c_str(), password))
+        if ( !ESPAsync_wifiManager.startConfigPortal(AP_SSID.c_str(), AP_PASS.c_str()) )
+        {
+            Serial.println(F("Not connected to WiFi but continuing anyway."));
+        }
+        else
+        {
+            Serial.println(F("WiFi connected...yeey :)"));
+            tft.println("Connecting to WiFi...");
+        }
+
+        // Stored  for later usage, from v1.1.0, but clear first
+        memset(&WM_config, 0, sizeof(WM_config));
+        
+        for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++)
+        {
+            String tempSSID = ESPAsync_wifiManager.getSSID(i);
+            String tempPW   = ESPAsync_wifiManager.getPW(i);
+        
+            if (strlen(tempSSID.c_str()) < sizeof(WM_config.WiFi_Creds[i].wifi_ssid) - 1)
+                strcpy(WM_config.WiFi_Creds[i].wifi_ssid, tempSSID.c_str());
+            else
+                strncpy(WM_config.WiFi_Creds[i].wifi_ssid, tempSSID.c_str(), sizeof(WM_config.WiFi_Creds[i].wifi_ssid) - 1);
+
+            if (strlen(tempPW.c_str()) < sizeof(WM_config.WiFi_Creds[i].wifi_pw) - 1)
+                strcpy(WM_config.WiFi_Creds[i].wifi_pw, tempPW.c_str());
+            else
+                strncpy(WM_config.WiFi_Creds[i].wifi_pw, tempPW.c_str(), sizeof(WM_config.WiFi_Creds[i].wifi_pw) - 1);  
+
+            // Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
+            if ( (String(WM_config.WiFi_Creds[i].wifi_ssid) != "") && (strlen(WM_config.WiFi_Creds[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE) )
+            {
+                LOGERROR3(F("* Add SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
+                wifiMulti.addAP(WM_config.WiFi_Creds[i].wifi_ssid, WM_config.WiFi_Creds[i].wifi_pw);
+            }
+        }
+
+        saveConfigData();
+    }
+    else
+    {
+        wifiMulti.addAP(Router_SSID.c_str(), Router_Pass.c_str());
+    }
+
+    startedAt = millis();
+
+    if (!initialConfig)
+    {
+        // Load stored data, the addAP ready for MultiWiFi reconnection
+        if (!configDataLoaded)
+        loadConfigData();
+
+        for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++)
+        {
+            // Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
+            if ( (String(WM_config.WiFi_Creds[i].wifi_ssid) != "") && (strlen(WM_config.WiFi_Creds[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE) )
+            {
+                LOGERROR3(F("* Add SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
+                wifiMulti.addAP(WM_config.WiFi_Creds[i].wifi_ssid, WM_config.WiFi_Creds[i].wifi_pw);
+            }
+        }
+
+        if ( WiFi.status() != WL_CONNECTED ) 
+        {
+            Serial.println(F("ConnectMultiWiFi in setup"));
+        
+            connectMultiWiFi();
+        }
+    }
+
+    Serial.print(F("After waiting "));
+    Serial.print((float) (millis() - startedAt) / 1000L);
+    Serial.print(F(" secs more in setup(), connection result is "));
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.print(F("connected. Local IP: "));
+        Serial.println(WiFi.localIP());
+    }
+    else
+    {
+        Serial.println(ESPAsync_wifiManager.getStatus(WiFi.status()));
+    }
+
+    //read updated parameters
+    strncpy(amplipiHost, custom_amplipiHost.getValue(), sizeof(amplipiHost));
+    strncpy(amplipiZone1, custom_amplipiZone1.getValue(), sizeof(amplipiZone1));
+    strncpy(amplipiZone2, custom_amplipiZone2.getValue(), sizeof(amplipiZone2));
+
+    //save the custom parameters to FS
+    if (shouldSaveConfig)
+    {
+        saveFileFSConfigFile();
+    }
+
 
     // Clear screen
     tft.fillScreen(TFT_BLACK);
     tft.setCursor(0, 20, 2);
 
-    tft.println("WiFi connected");
 
-    // Clear screen
-    tft.fillScreen(TFT_BLACK);
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-
+    // Show AmpliPi keypad screen
     drawMuteBtn();
     drawVolume(200);
     //getStream(amplipiSource);
@@ -903,6 +1516,9 @@ void setup(void)
 void loop()
 {
     uint16_t x, y;
+    
+    // WiFiManager status check
+    check_status();
 
     // See if there's any touch data for us
     if (tft.getTouch(&x, &y))
@@ -959,5 +1575,6 @@ void loop()
             getZone();
         }
     }
+
 }
 //------------------------------------------------------------------------------------------
