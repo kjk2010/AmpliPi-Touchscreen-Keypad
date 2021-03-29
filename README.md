@@ -11,7 +11,7 @@ Built using VS Code with Platform.IO.
 
 #### Basic setup instructions
 1. Wire the TFT touchscreen to the ESP32. Default pin selection below, but can be changed in libdeps/esp32dev/TFT_eSPI/User_Setup.h
-###### For a standard ESP32 dev board, use these settings:
+###### For a standard ESP32 dev board, use these settings in User_Setup.h:
 - TFT_MISO 19
 - TFT_MOSI 23
 - TFT_SCLK 18
@@ -19,9 +19,10 @@ Built using VS Code with Platform.IO.
 - TFT_DC    2
 - TFT_RST   4
 - TOUCH_CS 21
+
 ![alt text](https://github.com/kjk2010/AmpliPi-Touchscreen-Keypad/blob/main/docs/ESP32-to-TFT-pin-assignment.jpg?raw=true)
 
-###### For an Olimex ESP32-POE board, use these settings:
+###### For an Olimex ESP32-POE board, use these settings in User_Setup.h:
 - TFT_MISO 16
 - TFT_MOSI 36
 - TFT_SCLK 14
