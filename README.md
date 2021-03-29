@@ -11,14 +11,23 @@ Built using VS Code with Platform.IO.
 
 #### Basic setup instructions
 1. Wire the TFT touchscreen to the ESP32. Default pin selection below, but can be changed in libdeps/esp32dev/TFT_eSPI/User_Setup.h
+For a standard ESP32 dev board, use these settings:
 - TFT_MISO 19
 - TFT_MOSI 23
 - TFT_SCLK 18
-- TFT_CS   15  // Chip select control pin
-- TFT_DC    2  // Data Command control pin
-- TFT_RST   4  // Reset pin
-- TOUCH_CS 21  // Chip select pin (T_CS) of touch screen
+- TFT_CS   15
+- TFT_DC    2
+- TFT_RST   4
+- TOUCH_CS 21
 ![alt text](https://github.com/kjk2010/AmpliPi-Touchscreen-Keypad/blob/main/docs/ESP32-to-TFT-pin-assignment.jpg?raw=true)
+For an Olimex ESP32-POE board, use these settings:
+- TFT_MISO 16
+- TFT_MOSI 36
+- TFT_SCLK 14
+- TFT_CS   15
+- TFT_DC    2
+- TFT_RST   4
+- TOUCH_CS 13
 
 2. Clone this Github project
 3. Configure Wifi settings and AmpliPi host IP in src/Keypad-Touchscreen.cpp
@@ -28,12 +37,15 @@ Built using VS Code with Platform.IO.
 
 #### To do items
 - [x] Add WifiManager to configure Wifi AP settings, and move Wifi settings to config file - 90% complete
-- [ ] Add source selection screen
+- [x] Add source selection screen
+- [x] Add local source to source selection screen
 - [ ] Add settings screen
 - [ ] Add POE and Ethernet capabilities, utilizing Olimex's ESP32-POE board
+- [ ] Switch to using SSE or WebSockets, whichever AmpliPi server offers, instead of spamming API
 - [ ] Move zone selection to settings screen and save to config file. Include support for expansion units (more than 6 output zones)
 - [ ] Screen time out options (PIR, touch, screensaver showing full screen only metadata?)
 - [ ] Add AmpliPi preset functionality
+- [ ] Show configured names and add album art for local inputs
 
 
 #### Future features
