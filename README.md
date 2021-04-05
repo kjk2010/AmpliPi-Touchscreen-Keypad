@@ -33,16 +33,23 @@ Built using VS Code with Platform.IO.
 - [x] Add WifiManager to configure Wifi AP settings, and move Wifi settings to config file
 - [x] Add source selection screen
 - [x] Add local source to source selection screen
-- [ ] Add settings screen
-- [ ] Move zone selection to settings screen and save to config file. Include support for expansion units (more than 6 output zones)
+- [x] Add settings screen: Change Zone, Change Source, Reset WiFi & AmpliPi Host, Reset Touchscreen
+- [x] Move zone selection to settings screen and save to config file
+- [x] Show album art for local inputs
+- [x] Support coontrolling one or two zones
+- [ ] Split display functions from update data functions. Display functions should be drawing everything from memory, and update functions should be updated the data and triggering a draw if data has changed.
+- [ ] Research storing album art in RAM instead of file system
+- [ ] Add support for stream commands: Play/Pause, Next, Stop, Like
+- [ ] Add local inputs to source selection screen
 - [ ] Add POE and Ethernet capabilities, utilizing Olimex's ESP32-POE board
-- [ ] Show configured names and add album art for local inputs
+- [ ] Show configured names for local inputs
 - [ ] Switch to using SSE or WebSockets, whichever AmpliPi server offers, instead of spamming API
 - [ ] Screen time out options (PIR, touch, screensaver showing full screen only metadata?)
 - [ ] Add AmpliPi preset functionality
-- [ ] Put metadata into sprites and scroll them left and right
+- [ ] Put metadata into sprites and scroll long titles
 
 
 #### Future features
 - Add OTA upgrades
 - Integrate Home Assistant control options on a second screen
+- Add support for expansion units (more than 6 output zones)

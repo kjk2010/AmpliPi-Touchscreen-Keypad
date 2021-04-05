@@ -19,12 +19,15 @@ WiFiMulti wifiMulti;
 
 
 /* Debug options */
-#define DEBUGAPIREQ true
+#define DEBUGAPIREQ false
 
 
 /**************************************/
 /* Configure screen colors and layout */
 /**************************************/
+// How quickly does the metadata refresh (in milliseconds)
+#define REFRESH_INTERVAL 5000
+
 // Colors
 #define GREY 0x5AEB
 #define BLUE 0x9DFF
@@ -40,21 +43,26 @@ WiFiMulti wifiMulti;
 #define SRCBUTTON_W 40 // Oversize the button for easy selection
 #define SRCBUTTON_H 40 // Oversize the button for easy selection
 
-#define SRCPREVBUTTON_X 0
-#define SRCPREVBUTTON_Y 282
-#define SRCPREVBUTTON_W 100
-#define SRCPREVBUTTON_H 38
+#define LEFTBUTTON_X 0
+#define LEFTBUTTON_Y 282
+#define LEFTBUTTON_W 100
+#define LEFTBUTTON_H 38
 
-#define SRCNEXTBUTTON_X 140
-#define SRCNEXTBUTTON_Y 282
-#define SRCNEXTBUTTON_W 100
-#define SRCNEXTBUTTON_H 38
+#define RIGHTBUTTON_X 140
+#define RIGHTBUTTON_Y 282
+#define RIGHTBUTTON_W 100
+#define RIGHTBUTTON_H 38
+
+#define SETTINGBUTTON_X 102
+#define SETTINGBUTTON_Y 282
+#define SETTINGBUTTON_W 36
+#define SETTINGBUTTON_H 36
 
 // Main area, normally where metadata is shown
 #define MAINZONE_X 0
-#define MAINZONE_Y 38
+#define MAINZONE_Y 36
 #define MAINZONE_W 240
-#define MAINZONE_H 282 // From below the source top bar to the bottom of the screen
+#define MAINZONE_H 284 // From below the source top bar to the bottom of the screen
 
 // Album art location
 #define ALBUMART_X 60
@@ -62,27 +70,30 @@ WiFiMulti wifiMulti;
 
 // Warning zone
 #define WARNZONE_X 0
-#define WARNZONE_Y 250
+#define WARNZONE_Y 235
 #define WARNZONE_W 240
-#define WARNZONE_H 20
+#define WARNZONE_H 15
 
 // Mute button location
 #define MUTE_X 0
-#define MUTE_Y 280
+#define MUTE1_Y 247 // (upper)
+#define MUTE2_Y 284 // (lower)
 #define MUTE_W 36
 #define MUTE_H 36
 
 // Volume control bar position and size
 #define VOLBAR_X 45
-#define VOLBAR_Y 295
+#define VOLBAR1_Y 260 // (upper)
+#define VOLBAR2_Y 297 // (lower)
 #define VOLBAR_W 150
 #define VOLBAR_H 6
 
 // Volume control bar zone size
-#define VOLBARZONE_X 40
-#define VOLBARZONE_Y 280
-#define VOLBARZONE_W 160
-#define VOLBARZONE_H 40
+#define VOLBARZONE_X 36
+#define VOLBARZONE1_Y 247 // (upper)
+#define VOLBARZONE2_Y 284 // (lower)
+#define VOLBARZONE_W 204
+#define VOLBARZONE_H 36
 
 // Maximum length of the source name
 #define SRC_NAME_LEN 22
@@ -182,13 +193,14 @@ String AP_PASS;
 #define AMPLIPIZONE_LEN     6
 char amplipiHost [AMPLIPIHOST_LEN] = "amplipi.local"; // Default settings
 char amplipiZone1 [AMPLIPIZONE_LEN] = "0";
-char amplipiZone2 [AMPLIPIZONE_LEN] = "null";
+char amplipiZone2 [AMPLIPIZONE_LEN] = "-1";
+char amplipiSource [AMPLIPIZONE_LEN] = "0";
 
 
 /*************************************/
 /* Configure globally used variables */
 /*************************************/
-String activeScreen = "metadata"; // Available screens: metadata, source
+String activeScreen = "metadata"; // Available screens: metadata, source, setting
 String sourceName = "";
 String currentArtist = "";
 String currentSong = "";
@@ -196,17 +208,23 @@ String currentStatus = "";
 String currentAlbumArt = "";
 String currentSourceName = "";
 bool inWarning = false;
-int amplipiSource = 0;
-int amplipiZone = 0;
+int newAmplipiSource = 0;
+int newAmplipiZone1 = 0;
+int newAmplipiZone2 = 0;
+bool amplipiZone2Enabled = false;
 int totalStreams = 0;
 int currentSourceOffset = 0;
 int sourceIDs[6];
 bool updateAlbumart = true;
 bool updateSource = false;
-bool updateMute = true;
-bool mute = false;
-float volPercent = 100;
-bool updateVol = true;
+bool updateMute1 = true;
+bool updateMute2 = true;
+bool muteZone1 = false;
+bool muteZone2 = false;
+float volPercent1 = 100;
+float volPercent2 = 100;
+bool updateVol1 = true;
+bool updateVol2 = true;
 bool metadata_refresh = true;
 
 
@@ -229,7 +247,7 @@ uint8_t connectMultiWiFi()
   
   if ( (Router_SSID != "") && (Router_Pass != "") )
   {
-    LOGERROR3(F("* Flash-stored Router_SSID = "), Router_SSID, F(", Router_Pass = "), Router_Pass );
+    //LOGERROR3(F("* Flash-stored Router_SSID = "), Router_SSID, F(", Router_Pass = "), Router_Pass );
   }
 
   for (uint8_t i = 0; i < NUM_WIFI_CREDENTIALS; i++)
@@ -237,7 +255,7 @@ uint8_t connectMultiWiFi()
     // Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
     if ( (String(WM_config.WiFi_Creds[i].wifi_ssid) != "") && (strlen(WM_config.WiFi_Creds[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE) )
     {
-      LOGERROR3(F("* Additional SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
+      //LOGERROR3(F("* Additional SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
     }
   }
   
@@ -332,6 +350,9 @@ bool loadFileFSConfigFile()
  
           if (json["amplipiZone2"])
             strncpy(amplipiZone2, json["amplipiZone2"], sizeof(amplipiZone2));
+ 
+          if (json["amplipiSource"])
+            strncpy(amplipiSource, json["amplipiSource"], sizeof(amplipiSource));
         }
 
         //serializeJson(json, Serial);
@@ -358,6 +379,7 @@ bool saveFileFSConfigFile()
   json["amplipiHost"]  = amplipiHost;
   json["amplipiZone1"] = amplipiZone1;
   json["amplipiZone2"] = amplipiZone2;
+  json["amplipiSource"] = amplipiSource;
 
   File configFile = FileFS.open(configFileName, "w");
 
@@ -544,8 +566,8 @@ void touch_calibrate()
         tft.setFreeFont(FSS12);
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
-        tft.println("Touch corners as");
-        tft.println("indicated");
+        tft.println("Touch corners");
+        tft.println("as indicated");
 
         //tft.setTextFont(1);
         tft.println();
@@ -604,13 +626,11 @@ void clearMainArea()
 void drawWarning(String message)
 {
     tft.fillRect(WARNZONE_X, WARNZONE_Y, WARNZONE_W, WARNZONE_H, TFT_BLACK); // Clear warning area
-    tft.setTextDatum(TL_DATUM);
-    tft.setCursor(5, WARNZONE_Y, 2);
     Serial.print("Warning: ");
     Serial.println(message);
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.setFreeFont(FSS9);
-    tft.println(message);
+    tft.drawString(message, (WARNZONE_X + 5), WARNZONE_Y);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setFreeFont(FSS12);
     inWarning = true;
@@ -902,7 +922,7 @@ bool downloadAlbumart(String streamID)
     {
         Serial.println("[HTTP] GET... failed, error: " + http.errorToString(httpCode));
 
-        drawWarning("Unable to access AmpliPi");
+        //drawWarning("Unable to access AmpliPi");
         outcome = false;
     }
     http.end();
@@ -1027,14 +1047,17 @@ void drawSourceSelection()
     // Previous button
     if (showPrev)
     {
-        tft.fillRoundRect(SRCPREVBUTTON_X, SRCPREVBUTTON_Y, SRCPREVBUTTON_W, SRCPREVBUTTON_H, 6, TFT_DARKGREY);
+        tft.fillRoundRect(LEFTBUTTON_X, LEFTBUTTON_Y, LEFTBUTTON_W, LEFTBUTTON_H, 6, TFT_DARKGREY);
         tft.drawString("< Prev", (MAINZONE_X + 50), 292);
     }
+
+    // Settings button
+    drawBmp("/settings.bmp", SETTINGBUTTON_X, SETTINGBUTTON_Y);
 
     // Next button
     if (showNext)
     {
-        tft.fillRoundRect(SRCNEXTBUTTON_X, SRCNEXTBUTTON_Y, SRCNEXTBUTTON_W, SRCNEXTBUTTON_H, 6, TFT_DARKGREY);
+        tft.fillRoundRect(RIGHTBUTTON_X, RIGHTBUTTON_Y, RIGHTBUTTON_W, RIGHTBUTTON_H, 6, TFT_DARKGREY);
         tft.drawString("Next >", (MAINZONE_X + 140 + 50), 292);
     }
 
@@ -1082,7 +1105,7 @@ void selectSource(int y)
 void drawSettings()
 {
     // Available settings:
-    // - Select zone, zones, or group to manage
+    // - Select zones to manage
     // - Reset WiFi settings (delete 'wifi.json' config file and reboot, or enable web server to select AP)
     // - Restart
     // - Show version, Wifi AP, IP address
@@ -1093,38 +1116,90 @@ void drawSettings()
     // Clear screen
     clearMainArea();
     
-    // Show settings
+    // Show settings:
+    // Zone 1
+    tft.setFreeFont(FSS12);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("Zone 1: " + String(amplipiZone1), 5, 50);
 
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+    tft.fillRoundRect(160, 42, 36, 36, 6, TFT_DARKGREEN);
+    tft.drawString("<", 170, 47);
+    tft.fillRoundRect(200, 42, 36, 36, 6, TFT_DARKGREEN);
+    tft.drawString(">", 212, 47);
 
+    tft.fillRect(20, 80, 200, 1, GREY); // Seperator
+    
+    // Zone 2
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    String thisZone;
+    if (atoi(amplipiZone2) < 0) { thisZone = "None"; }
+    else { thisZone = String(amplipiZone2); }
+    tft.drawString("Zone 2: " + thisZone, 5, 90);
+
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+    tft.fillRoundRect(160, 82, 36, 36, 6, TFT_DARKGREEN);
+    tft.drawString("<", 170, 87);
+    tft.fillRoundRect(200, 82, 36, 36, 6, TFT_DARKGREEN);
+    tft.drawString(">", 212, 87);
+    
+    tft.fillRect(20, 120, 200, 1, GREY); // Seperator
+
+    // Source
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("Source: " + String(amplipiSource), 5, 130);
+
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+    tft.fillRoundRect(160, 122, 36, 36, 6, TFT_DARKGREEN);
+    tft.drawString("<", 170, 127);
+    tft.fillRoundRect(200, 122, 36, 36, 6, TFT_DARKGREEN);
+    tft.drawString(">", 212, 127);
+
+    tft.fillRect(20, 160, 200, 1, GREY); // Seperator
+
+    // Reset WiFi & AmpliPi URL
+    tft.setFreeFont(FSS9);
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+    tft.fillRoundRect(0, 190, 240, 36, 6, TFT_DARKGREEN);
+    tft.drawString("Reset WiFi & AmpliPi URL", 10, 200);
+    
+    // Re-calibrate touchscreen
+    tft.fillRoundRect(0, 230, 240, 36, 6, TFT_DARKGREEN);
+    tft.drawString("Re-calibrate Touchscreen", 10, 240);
+
+    // Save and Cancel buttons
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
+
+    tft.fillRoundRect(LEFTBUTTON_X, LEFTBUTTON_Y, LEFTBUTTON_W, LEFTBUTTON_H, 6, TFT_DARKGREY);
+    tft.drawString("Save", (MAINZONE_X + 50), 292);
+
+    tft.fillRoundRect(RIGHTBUTTON_X, RIGHTBUTTON_Y, RIGHTBUTTON_W, RIGHTBUTTON_H, 6, TFT_DARKGREY);
+    tft.drawString("Cancel", (MAINZONE_X + 140 + 50), 292);
+
+    // Reset to default
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setFreeFont(FSS12);
 }
 
 
-void saveSettings()
-{
-    // Save settings
-
-
-    // Reboot if requested
-
-
-    // Restart metadata refresh
-    metadata_refresh = true;
-}
-
-
-void sendVolUpdate()
+void sendVolUpdate(int zone)
 {
     // Send volume update to API, but only one update per second so we don't spam it
-    int volDb = (int)(volPercent * 0.79 - 79); // Convert to proper AmpliPi number (-79 to 0)
+    int volDb = 0;
+    if (zone == 1) { volDb = (int)(volPercent1 * 0.79 - 79); } // Convert to proper AmpliPi number (-79 to 0)
+    else if (zone == 2) { volDb = (int)(volPercent2 * 0.79 - 79); } // Convert to proper AmpliPi number (-79 to 0)
+
     String payload = "{\"vol\": " + String(volDb) + "}";
-    bool result = patchAPI("zones/" + String(amplipiZone), payload);
+    bool result = patchAPI("zones/" + String(amplipiZone1), payload);
     Serial.print("sendVolUpdate result: ");
     Serial.println(result);
 }
 
-void drawVolume(int x)
+void drawVolume(int x, int zone)
 {
-    if (!updateVol)
+    if (!updateVol1 && !updateVol2)
     {
         return;
     }; // Only update volume on screen if we need to
@@ -1134,66 +1209,141 @@ void drawVolume(int x)
         x = 200;
     } // Bring to 100% if it's close
 
-    tft.fillRect(VOLBARZONE_X, VOLBARZONE_Y, 320, VOLBARZONE_H, TFT_BLACK); // Clear area first
+    if (amplipiZone2Enabled) {
+        // Two Zone Mode
+        if (zone == 1) {
+            // Zone 1
+            tft.fillRect(VOLBARZONE_X, VOLBARZONE1_Y, VOLBARZONE_W, VOLBARZONE_H, TFT_BLACK); // Clear area first
 
-    volPercent = (x - 40) / 1.6;
-    Serial.println("Drawing volume bar.");
-    Serial.print("New Volume Level: ");
-    Serial.println(volPercent);
+            // Volume control bar
+            tft.fillRect(VOLBAR_X, VOLBAR1_Y, VOLBAR_W, VOLBAR_H, GREY);           // Grey bar
+            if (muteZone1) {
+                // Muted
+                tft.fillCircle(x, (VOLBAR1_Y + 2), 8, GREY);                       // Circle marker
+            }
+            else {
+                // Unmuted
+                tft.fillRect(VOLBAR_X, VOLBAR1_Y, (x - VOLBAR_X), VOLBAR_H, BLUE); // Blue active bar
+                tft.fillCircle(x, (VOLBAR1_Y + 2), 8, BLUE);                       // Circle marker
+            }
+            updateVol1 = false;
+        }
+        else if (zone == 2) {
+            // Zone 2
+            tft.fillRect(VOLBARZONE_X, VOLBARZONE2_Y, VOLBARZONE_W, VOLBARZONE_H, TFT_BLACK); // Clear area first
 
-    int barWidth = VOLBAR_W * (volPercent / 100);
-    Serial.print("New barWidth: ");
-    Serial.println(barWidth);
-    Serial.print("New x: ");
-    Serial.println(x);
+            // Volume control bar
+            tft.fillRect(VOLBAR_X, VOLBAR2_Y, VOLBAR_W, VOLBAR_H, GREY);           // Grey bar
+            if (muteZone2) {
+                // Muted
+                tft.fillCircle(x, (VOLBAR2_Y + 2), 8, GREY);                       // Circle marker
+            }
+            else {
+                // Unmuted
+                tft.fillRect(VOLBAR_X, VOLBAR2_Y, (x - VOLBAR_X), VOLBAR_H, BLUE); // Blue active bar
+                tft.fillCircle(x, (VOLBAR2_Y + 2), 8, BLUE);                       // Circle marker
+            }
+            updateVol2 = false;
+        }
+    }
+    else {
+        // One Zone Mode
+        tft.fillRect(VOLBARZONE_X, VOLBARZONE2_Y, VOLBARZONE_W, VOLBARZONE_H, TFT_BLACK);   // Clear area first
 
-    // Volume control bar
-    tft.fillRect(VOLBAR_X, VOLBAR_Y, VOLBAR_W, VOLBAR_H, GREY);       // Grey bar
-    tft.fillRect(VOLBAR_X, VOLBAR_Y, (x - VOLBAR_X), VOLBAR_H, BLUE); // Blue active bar
-    tft.fillCircle(x, (VOLBAR_Y + 2), 8, BLUE);                       // Circle marker
+        // Volume control bar
+        tft.fillRect(VOLBAR_X, VOLBAR2_Y, VOLBAR_W, VOLBAR_H, GREY);               // Grey bar
+        if (muteZone1) {
+            // Muted
+            tft.fillCircle(x, (VOLBAR2_Y + 2), 8, GREY);
+        }
+        else {
+            tft.fillRect(VOLBAR_X, VOLBAR2_Y, (x - VOLBAR_X), VOLBAR_H, BLUE);    // Blue active bar
+            tft.fillCircle(x, (VOLBAR2_Y + 2), 8, BLUE);
+        }
+        updateVol1 = false;
+    }
 
-    updateVol = false;
 }
 
 
-void sendMuteUpdate()
+void sendMuteUpdate(int zone)
 {
     // Send volume update to API, but only one update per second so we don't spam it
     String payload;
 
-    if (mute) {
-        payload = "{\"mute\": true}";
+    if (zone == 1)
+    {
+        if (muteZone1) {
+            payload = "{\"mute\": true}";
+        }
+        else {
+            payload = "{\"mute\": false}";
+        }
+        bool result = patchAPI("zones/" + String(amplipiZone1), payload);
+        Serial.print("sendMuteUpdate result: ");
+        Serial.println(result);
     }
-    else {
-        payload = "{\"mute\": false}";
+    else if (zone == 2)
+    {
+        if (muteZone2) {
+            payload = "{\"mute\": true}";
+        }
+        else {
+            payload = "{\"mute\": false}";
+        }
+        bool result = patchAPI("zones/" + String(amplipiZone2), payload);
+        Serial.print("sendMuteUpdate result: ");
+        Serial.println(result);
     }
-    bool result = patchAPI("zones/" + String(amplipiZone), payload);
-    Serial.print("sendMuteUpdate result: ");
-    Serial.println(result);
 }
 
-void drawMuteBtn()
+void drawMuteBtn(int zone)
 {
-    if (!updateMute)
+    if (!updateMute1 && !updateMute2)
     {
         return;
     }; // Only update mute button on screen if we need to
 
-    Serial.println("Drawing mute button.");
+    Serial.print("Drawing mute button for zone ");
+    Serial.println(zone);
 
-    tft.fillRect(MUTE_X, MUTE_Y, MUTE_W, MUTE_H, TFT_BLACK); // Clear area first
+    if (amplipiZone2Enabled) {
+        // Two Zone Mode
+        if (zone == 1) {
+            tft.fillRect(MUTE_X, MUTE1_Y, MUTE_W, MUTE_H, TFT_BLACK); // Upper section
+        }
+        else if (zone == 2) {
+            tft.fillRect(MUTE_X, MUTE2_Y, MUTE_W, MUTE_H, TFT_BLACK); // Lower section
+        }
+    }
+    else {
+        // One Zone Mode, lower section
+        tft.fillRect(MUTE_X, MUTE2_Y, MUTE_W, MUTE_H, TFT_BLACK);
+    }
 
     // Mute/unmute button
-    if (mute)
-    {
-        drawBmp("/volume_off.bmp", MUTE_X, MUTE_Y);
+    if (amplipiZone2Enabled) {
+        // Two Zone Mode
+        if (zone == 1) {
+            // Upper section
+            if (muteZone1) { drawBmp("/volume_off.bmp", MUTE_X, MUTE1_Y); }
+            else { drawBmp("/volume_up.bmp", MUTE_X, MUTE1_Y); }
+            updateMute1 = false;
+        }
+        else if (zone == 2) {
+            // Lower section
+            if (muteZone2) { drawBmp("/volume_off.bmp", MUTE_X, MUTE2_Y); }
+            else { drawBmp("/volume_up.bmp", MUTE_X, MUTE2_Y); }
+            updateMute2 = false;
+        }
     }
-    else
-    {
-        drawBmp("/volume_up.bmp", MUTE_X, MUTE_Y);
+    else {
+        // One Zone Mode, lower section
+        if (muteZone1) { drawBmp("/volume_off.bmp", MUTE_X, MUTE2_Y); }
+        else { drawBmp("/volume_up.bmp", MUTE_X, MUTE2_Y); }
+        updateMute1 = false;
     }
 
-    updateMute = false;
 }
 
 
@@ -1219,38 +1369,127 @@ String getValue(String data, char separator, int index)
 
 void getZone()
 {
-    String json = requestAPI("zones/" + String(amplipiZone));
+    if (amplipiZone2Enabled) {
+        // Two Zone Mode
 
-    // DynamicJsonDocument<N> allocates memory on the heap
-    DynamicJsonDocument ampSourceStatus(1000);
+        // Zone 1
+        String json = requestAPI("zones/" + String(amplipiZone1));
+        DynamicJsonDocument ampSourceStatus(1000); // DynamicJsonDocument<N> allocates memory on the heap
+        DeserializationError error = deserializeJson(ampSourceStatus, json); // Deserialize the JSON document
 
-    // Deserialize the JSON document
-    DeserializationError error = deserializeJson(ampSourceStatus, json);
+        // Test if parsing succeeds.
+        if (error)
+        {
+            Serial.print(F("deserializeJson() failed: "));
+            Serial.println(error.f_str());
+        }
 
-    // Test if parsing succeeds.
-    if (error)
-    {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.f_str());
-    }
+        // Update mute if data from API has changed
+        bool currentMute1 = ampSourceStatus["mute"];
+        if (currentMute1 != muteZone1) {
+            muteZone1 = currentMute1;
+            updateMute1 = true;
+            updateVol1 = true;
+        }
+        drawMuteBtn(1);
 
-    bool currentMute = ampSourceStatus["mute"];
-    mute = currentMute;
-    drawMuteBtn();
+        // Update volume bar if data from API has changed
+        int currentVol = ampSourceStatus["vol"];
+        int newVolPercent1;
+        if (currentVol < 0) {
+            newVolPercent1 = currentVol / 0.79 + 100; // Convert from AmpliPi number (-79 to 0) to percent
+        }
+        else {
+            newVolPercent1 = 100;
+        }
 
-    int currentVol = ampSourceStatus["mute"];
-    if (currentVol < 0) {
-        volPercent = currentVol / 0.79 + 100; // Convert from AmpliPi number (-79 to 0) to percent
+        if (volPercent1 != newVolPercent1) {
+            volPercent1 = newVolPercent1;
+            updateVol1 = true;
+        }
+        drawVolume(int((volPercent1 * 1.6) + 45), 1); // Multiply by 1.5 (150px) and add 40 pixels to give it the x coord
+
+        // Zone 2
+        String json2 = requestAPI("zones/" + String(amplipiZone2));
+        DynamicJsonDocument ampSourceStatus2(1000); // DynamicJsonDocument<N> allocates memory on the heap
+        DeserializationError error2 = deserializeJson(ampSourceStatus2, json2); // Deserialize the JSON document
+
+        // Test if parsing succeeds.
+        if (error2)
+        {
+            Serial.print(F("deserializeJson() failed: "));
+            Serial.println(error2.f_str());
+        }
+
+        // Update mute if data from API has changed
+        bool currentMute2 = ampSourceStatus2["mute"];
+        if (currentMute2 != muteZone2) {
+            muteZone2 = currentMute2;
+            updateMute2 = true;
+            updateVol2 = true;
+        }
+        drawMuteBtn(2);
+
+        // Update volume bar if data from API has changed
+        int currentVol2 = ampSourceStatus2["vol"];
+        int newVolPercent2;
+        if (currentVol2 < 0) {
+            newVolPercent2 = currentVol2 / 0.79 + 100; // Convert from AmpliPi number (-79 to 0) to percent
+        }
+        else {
+            newVolPercent2 = 100;
+        }
+        
+        if (volPercent2 != newVolPercent2) {
+            volPercent2 = newVolPercent2;
+            updateVol2 = true;
+        }
+
+        drawVolume(int((volPercent2 * 1.5) + 45), 2); // Multiply by 1.5 (150px) and add 40 pixels to give it the x coord
     }
     else {
-        volPercent = 100;
+        // One Zone Mode
+        String json = requestAPI("zones/" + String(amplipiZone1));
+        DynamicJsonDocument ampSourceStatus(1000); // DynamicJsonDocument<N> allocates memory on the heap
+        DeserializationError error = deserializeJson(ampSourceStatus, json); // Deserialize the JSON document
+
+        // Test if parsing succeeds.
+        if (error)
+        {
+            Serial.print(F("deserializeJson() failed: "));
+            Serial.println(error.f_str());
+        }
+
+        // Update mute if data from API has changed
+        bool currentMute = ampSourceStatus["mute"];
+        if (currentMute != muteZone1) {
+            muteZone1 = currentMute;
+            updateMute1 = true;
+            updateVol1 = true;
+        }
+        drawMuteBtn(1);
+
+        // Update volume bar if data from API has changed
+        int currentVol = ampSourceStatus["vol"];
+        int newVolPercent1;
+        if (currentVol < 0) {
+            newVolPercent1 = currentVol / 0.79 + 100; // Convert from AmpliPi number (-79 to 0) to percent
+        }
+        else {
+            newVolPercent1 = 100;
+        }
+
+        if (volPercent1 != newVolPercent1) {
+            volPercent1 = newVolPercent1;
+            updateVol1 = true;
+        }
+        drawVolume(int((volPercent1 * 1.5) + 45), 1); // Multiply by 1.5 (150px) and add 40 pixels to give it the x coord
     }
-    drawVolume(int(volPercent * 1.6)); // Multiply by 1.6 to give it the x coord
 
 }
 
 
-String getSource(int sourceID)
+String getSource(String sourceID)
 {
     String json = requestAPI("sources/" + String(sourceID));
 
@@ -1320,18 +1559,14 @@ void drawMetadata()
 
     tft.setTextDatum(TC_DATUM);
     tft.setFreeFont(FSS12);
-    //tft.setCursor(3, 120, 2);
-    tft.fillRect(0, 157, 320, 125, TFT_BLACK); // Clear metadata area first
+    tft.fillRect(0, 157, 240, 90, TFT_BLACK); // Clear metadata area first
     tft.drawString(displaySong, 120, 165, GFXFF); // Center Middle
     tft.fillRect(20, 192, 200, 1, GREY);         // Seperator between song and artist
     tft.drawString(displayArtist, 120, 200, GFXFF);
-    //TODO:
-    //tft.setFreeFont(FSS9);
-    //tft.println(streamAlbum);
 }
 
 
-void getStream(int sourceID)
+void getStream(String sourceID)
 {
     String streamID = getSource(sourceID);
 
@@ -1347,6 +1582,7 @@ void getStream(int sourceID)
         // Local Input
         streamSong = "Local Input";
         streamName = currentSourceName;
+        albumArt = "local";
     }
     else
     {
@@ -1472,7 +1708,8 @@ void setup(void)
     loadFileFSConfigFile();
     ESPAsync_WMParameter custom_amplipiHost ("amplipiHost",  "amplipiHost",  amplipiHost,  AMPLIPIHOST_LEN + 1);
     ESPAsync_WMParameter custom_amplipiZone1("amplipiZone1", "amplipiZone1", amplipiZone1, AMPLIPIZONE_LEN + 1);
-    ESPAsync_WMParameter custom_amplipiZone2("amplipiZone2", "amplipiZone2", amplipiZone2, AMPLIPIZONE_LEN + 1 );
+    ESPAsync_WMParameter custom_amplipiZone2("amplipiZone2", "amplipiZone2", amplipiZone2, AMPLIPIZONE_LEN + 1);
+    ESPAsync_WMParameter custom_amplipiSource("amplipiSource", "amplipiSource", amplipiSource, AMPLIPIZONE_LEN + 1);
     unsigned long startedAt = millis();
     
     //Local intialization. Once its business is done, there is no need to keep it around
@@ -1492,6 +1729,7 @@ void setup(void)
     ESPAsync_wifiManager.addParameter(&custom_amplipiHost);
     ESPAsync_wifiManager.addParameter(&custom_amplipiZone1);
     ESPAsync_wifiManager.addParameter(&custom_amplipiZone2);
+    ESPAsync_wifiManager.addParameter(&custom_amplipiSource);
 
     //reset settings - for testing
     //ESPAsync_wifiManager.resetSettings();
@@ -1533,7 +1771,7 @@ void setup(void)
     // Don't permit NULL password
     if ( (Router_SSID != "") && (Router_Pass != "") )
     {
-        LOGERROR3(F("* Add SSID = "), Router_SSID, F(", PW = "), Router_Pass);
+        //LOGERROR3(F("* Add SSID = "), Router_SSID, F(", PW = "), Router_Pass);
         wifiMulti.addAP(Router_SSID.c_str(), Router_Pass.c_str());
 
         ESPAsync_wifiManager.setConfigPortalTimeout(120); //If no access point name has been previously entered disable timeout.
@@ -1561,10 +1799,10 @@ void setup(void)
         tft.println("connecting to:");
         tft.setFreeFont(FSS9);
         tft.println("");
-        tft.print("SSID: ");
+        tft.println("SSID: ");
         tft.println(AP_SSID.c_str());
-        tft.print("Pass: ");
-        tft.println(AP_PASS.c_str());
+        //tft.print("Pass: ");
+        //tft.println(AP_PASS.c_str());
     }
 
     if (initialConfig)
@@ -1604,7 +1842,7 @@ void setup(void)
             // Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
             if ( (String(WM_config.WiFi_Creds[i].wifi_ssid) != "") && (strlen(WM_config.WiFi_Creds[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE) )
             {
-                LOGERROR3(F("* Add SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
+                //LOGERROR3(F("* Add SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
                 wifiMulti.addAP(WM_config.WiFi_Creds[i].wifi_ssid, WM_config.WiFi_Creds[i].wifi_pw);
             }
         }
@@ -1629,7 +1867,7 @@ void setup(void)
             // Don't permit NULL SSID and password len < MIN_AP_PASSWORD_SIZE (8)
             if ( (String(WM_config.WiFi_Creds[i].wifi_ssid) != "") && (strlen(WM_config.WiFi_Creds[i].wifi_pw) >= MIN_AP_PASSWORD_SIZE) )
             {
-                LOGERROR3(F("* Add SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
+                //LOGERROR3(F("* Add SSID = "), WM_config.WiFi_Creds[i].wifi_ssid, F(", PW = "), WM_config.WiFi_Creds[i].wifi_pw );
                 wifiMulti.addAP(WM_config.WiFi_Creds[i].wifi_ssid, WM_config.WiFi_Creds[i].wifi_pw);
             }
         }
@@ -1637,7 +1875,7 @@ void setup(void)
         if ( WiFi.status() != WL_CONNECTED ) 
         {
             Serial.println(F("ConnectMultiWiFi in setup"));
-        
+
             connectMultiWiFi();
         }
     }
@@ -1660,6 +1898,15 @@ void setup(void)
     strncpy(amplipiHost, custom_amplipiHost.getValue(), sizeof(amplipiHost));
     strncpy(amplipiZone1, custom_amplipiZone1.getValue(), sizeof(amplipiZone1));
     strncpy(amplipiZone2, custom_amplipiZone2.getValue(), sizeof(amplipiZone2));
+    strncpy(amplipiSource, custom_amplipiSource.getValue(), sizeof(amplipiSource));
+
+    newAmplipiZone1 = atoi(amplipiZone1);
+    newAmplipiZone2 = atoi(amplipiZone2);
+    newAmplipiSource = atoi(amplipiSource);
+
+    // If amplipiZone2 is 0 or great, Zone 2 should be enabled
+    if (atoi(amplipiZone2) >= 0) { amplipiZone2Enabled = true; }
+    else { amplipiZone2Enabled = false; }
 
     //save the custom parameters to FS
     if (shouldSaveConfig)
@@ -1671,12 +1918,6 @@ void setup(void)
     // Clear screen
     tft.fillScreen(TFT_BLACK);
     tft.setCursor(0, 20, 2);
-
-
-    // Show AmpliPi keypad screen
-    drawMuteBtn();
-    drawVolume(200);
-    //getStream(amplipiSource);
 }
 //------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
@@ -1693,8 +1934,8 @@ void loop()
         // Draw a block spot to show where touch was calculated to be
         //tft.fillCircle(x, y, 2, TFT_BLUE);
         Serial.print("X: ");
-        Serial.println(x);
-        Serial.print("Y: ");
+        Serial.print(x);
+        Serial.print(" - Y: ");
         Serial.println(y);
 
         // Touch screen control
@@ -1717,36 +1958,72 @@ void loop()
             // Mute button
             if ((x > MUTE_X) && (x < (MUTE_X + MUTE_W)))
             {
-                if ((y > MUTE_Y) && (y <= (MUTE_Y + MUTE_H)))
+                if (amplipiZone2Enabled && (y > MUTE1_Y) && (y <= (MUTE1_Y + MUTE_H)))
                 {
-                    if (mute)
-                    {
-                        mute = false;
-                    }
-                    else
-                    {
-                        mute = true;
-                    }
-                    updateMute = true;
-                    drawMuteBtn();
-                    sendMuteUpdate();
-                    Serial.print("Mute button hit.");
-                    delay(100); // Debounce
+                    // Two Zone Mode, upper section
+                    if (muteZone1) { muteZone1 = false; }
+                    else { muteZone1 = true; }
+                    updateMute1 = true;
+                    updateVol1 = true;
+                    drawMuteBtn(1);
+                    sendMuteUpdate(1);
                 }
+                else if ((y > MUTE2_Y) && (y <= (MUTE2_Y + MUTE_H)))
+                {
+                    if (amplipiZone2Enabled) {
+                        // Two Zone Mode, lower section
+                        if (muteZone2) { muteZone2 = false; }
+                        else { muteZone2 = true; }
+                        updateMute2 = true;
+                        updateVol2 = true;
+                        drawMuteBtn(2);
+                        sendMuteUpdate(2);
+                    }
+                    else {
+                        // One Zone Mode
+                        if (muteZone1) { muteZone1 = false; }
+                        else { muteZone1 = true; }
+                        updateMute1 = true;
+                        updateVol1 = true;
+                        drawMuteBtn(1);
+                        sendMuteUpdate(1);
+                    }
+                }
+                Serial.print("Mute button hit.");
             }
 
             // Volume control
             if ((x > VOLBARZONE_X) && (x < (VOLBARZONE_X + VOLBARZONE_W)))
             {
-                if ((y > VOLBARZONE_Y) && (y <= (VOLBARZONE_Y + VOLBARZONE_H)))
+                if (amplipiZone2Enabled && (y > VOLBARZONE1_Y) && (y <= (VOLBARZONE1_Y + VOLBARZONE_H)))
                 {
-                    updateVol = true;
-                    drawVolume(x);
-                    sendVolUpdate();
-                    Serial.print("Volume control hit.");
-                    delay(100); // Debounce
+                    // Two Zone Mode, upper section
+                    updateVol1 = true;
+                    volPercent1 = (x - 35) / 1.5;
+                    drawVolume(x, 1);
+                    sendVolUpdate(1);
                 }
+                else if ((y > VOLBARZONE2_Y) && (y <= (VOLBARZONE2_Y + VOLBARZONE_H)))
+                {
+                    if (amplipiZone2Enabled) {
+                        // Two Zone Mode, lower section
+                        updateVol2 = true;
+                        volPercent2 = (x - 35) / 1.5;
+                        drawVolume(x, 2);
+                        sendVolUpdate(2);
+                    }
+                    else {
+                        // One Zone Mode
+                        updateVol1 = true;
+                        volPercent1 = (x - 35) / 1.5;
+                        drawVolume(x, 1);
+                        sendVolUpdate(1);
+                    }
+                }
+                Serial.print("Volume control hit.");
             }
+            
+            delay(200); // Debounce
         }
         else if (activeScreen == "source")
         {
@@ -1761,41 +2038,57 @@ void loop()
                     // Reload main metadata screen
                     activeScreen = "metadata";
                     metadata_refresh = true;
-                    updateMute = true;
+                    updateMute1 = true;
+                    updateMute2 = true;
                     updateAlbumart = true;
-                    updateVol = true;
+                    updateVol1 = true;
+                    updateVol2 = true;
                     currentSourceOffset = 0;
 
                     clearMainArea();
-                    drawMuteBtn();
+                    if (amplipiZone2Enabled) {
+                        drawMuteBtn(1);
+                        drawMuteBtn(2);
+                    }
+                    else {
+                        drawMuteBtn(1);
+                    }
                     drawMetadata();
                     drawAlbumart();
                 }
             }
 
             // Select source (anything between source bar and Prev/Next buttons)
-            if ((y > 36) && (y <= SRCNEXTBUTTON_Y))
+            if ((y > 36) && (y <= RIGHTBUTTON_Y))
             {
                 selectSource(y);
 
                 // Reload main metadata screen
                 activeScreen = "metadata";
                 metadata_refresh = true;
-                updateMute = true;
+                updateMute1 = true;
+                updateMute2 = true;
                 updateAlbumart = true;
-                updateVol = true;
+                updateVol1 = true;
+                updateVol2 = true;
                 currentSourceOffset = 0;
 
                 clearMainArea();
-                drawMuteBtn();
+                if (amplipiZone2Enabled) {
+                    drawMuteBtn(1);
+                    drawMuteBtn(2);
+                }
+                else {
+                    drawMuteBtn(1);
+                }
                 drawMetadata();
                 drawAlbumart();
             }
             
             // Previous list of sources
-            if ((x > SRCPREVBUTTON_X) && (x < (SRCPREVBUTTON_X + SRCPREVBUTTON_W)))
+            if ((x > LEFTBUTTON_X) && (x < (LEFTBUTTON_X + LEFTBUTTON_W)))
             {
-                if ((y > SRCPREVBUTTON_Y) && (y <= (SRCPREVBUTTON_Y + SRCPREVBUTTON_H)))
+                if ((y > LEFTBUTTON_Y) && (y <= (LEFTBUTTON_Y + LEFTBUTTON_H)))
                 {
                     // Show previous set of streams
                     currentSourceOffset = currentSourceOffset - 6;
@@ -1805,28 +2098,174 @@ void loop()
             }
             
             // Next list of sources
-            if ((x > SRCNEXTBUTTON_X) && (x < (SRCNEXTBUTTON_X + SRCNEXTBUTTON_W)))
+            if ((x > RIGHTBUTTON_X) && (x < (RIGHTBUTTON_X + RIGHTBUTTON_W)))
             {
-                if ((y > SRCNEXTBUTTON_Y) && (y <= (SRCNEXTBUTTON_Y + SRCNEXTBUTTON_H)))
+                if ((y > RIGHTBUTTON_Y) && (y <= (RIGHTBUTTON_Y + RIGHTBUTTON_H)))
                 {
                     // Show next set of streams
                     currentSourceOffset = currentSourceOffset + 6;
                     drawSourceSelection();
                 }
             }
-            delay(100); // Debounce
+
+            // Settings screen
+            if ((x > SETTINGBUTTON_X) && (x < (SETTINGBUTTON_X + SETTINGBUTTON_W)))
+            {
+                if ((y > SETTINGBUTTON_Y) && (y <= (SETTINGBUTTON_Y + SETTINGBUTTON_H)))
+                {
+                    // Show settings screen
+                    activeScreen = "setting";
+                    drawSettings();
+                }
+            }
+
+            delay(200); // Debounce
+        }
+        else if (activeScreen == "setting")
+        {
+            // Zone 1 Change
+            if ((y > 40) && (y <= 80))
+            {
+                if ((x > 160) && (x < 200)) { --newAmplipiZone1; } // Decrement zone number
+                else if ((x > 200) && (x < 240)) { ++newAmplipiZone1; } // Increment zone number
+
+                if (newAmplipiZone1 < 0) { newAmplipiZone1 = 0; }
+                else if (newAmplipiZone1 > 3) { newAmplipiZone1 = 3; }
+
+                tft.fillRect(0, 41, 160, 38, TFT_BLACK);
+                tft.drawString("Zone 1: " + String(newAmplipiZone1), 5, 50);
+            }
+            // Zone 2 Change
+            else if ((y > 80) && (y <= 120))
+            {
+                if ((x > 160) && (x < 200)) { --newAmplipiZone2; } // Decrement zone number
+                else if ((x > 200) && (x < 240)) { ++newAmplipiZone2; } // Increment zone number
+
+                if (newAmplipiZone2 < -1) { newAmplipiZone2 = -1; }
+                else if (newAmplipiZone2 > 3) { newAmplipiZone2 = 3; }
+                
+                String thisZone;
+                if (newAmplipiZone2 < 0) { thisZone = "None"; }
+                else { thisZone = String(newAmplipiZone2); }
+
+                tft.fillRect(0, 81, 160, 38, TFT_BLACK);
+                tft.drawString("Zone 2: " + thisZone, 5, 90);
+            }
+            // Source Change
+            else if ((y > 120) && (y <= 160))
+            {
+                if ((x > 160) && (x < 200)) { --newAmplipiSource; } // Decrement source number
+                else if ((x > 200) && (x < 240)) { ++newAmplipiSource; } // Increment source number
+
+                if (newAmplipiSource < 0) { newAmplipiSource = 0; }
+                else if (newAmplipiSource > 3) { newAmplipiSource = 3; }
+
+                tft.fillRect(0, 121, 160, 38, TFT_BLACK);
+                tft.drawString("Source: " + String(newAmplipiSource), 5, 130);
+            }
+
+            // Reset WiFi & AmpliPi URL
+            if ((y >= 190) && (y < 230))
+            {
+                // Delete WiFi and Config settings file and reboot
+                if (SPIFFS.exists(configFileName))
+                {
+                    // Delete if we want to re-calibrate
+                    SPIFFS.remove(configFileName);
+                }
+                WiFi.disconnect();
+                ESP.restart();
+            }
+
+            // Re-calibrate Touchscreen
+            if ((y >= 230) && (y <= 270))
+            {
+                // Delete TouchCalData file and reboot
+                if (SPIFFS.exists(CALIBRATION_FILE))
+                {
+                    // Delete if we want to re-calibrate
+                    SPIFFS.remove(CALIBRATION_FILE);
+                }
+                ESP.restart();
+            }
+
+            // Save Changes
+            if ((x > LEFTBUTTON_X) && (x < (LEFTBUTTON_X + LEFTBUTTON_W)))
+            {
+                if ((y > LEFTBUTTON_Y) && (y <= (LEFTBUTTON_Y + LEFTBUTTON_H)))
+                {
+                    // Save Settings
+                    sprintf(amplipiZone1, "%d", newAmplipiZone1);
+                    sprintf(amplipiZone2, "%d", newAmplipiZone2);
+                    sprintf(amplipiSource, "%d", newAmplipiSource);
+                    saveFileFSConfigFile();
+                    
+                    // If amplipiZone2 is 0 or great, Zone 2 should be enabled
+                    if (newAmplipiSource >= 0) { amplipiZone2Enabled = true; }
+                    else { amplipiZone2Enabled = false; }
+
+                    // Reload main metadata screen
+                    activeScreen = "metadata";
+                    metadata_refresh = true;
+                    updateMute1 = true;
+                    updateMute2 = true;
+                    updateAlbumart = true;
+                    updateVol1 = true;
+                    updateVol2 = true;
+                    currentSourceOffset = 0;
+
+                    clearMainArea();
+                    if (amplipiZone2Enabled) {
+                        drawMuteBtn(1);
+                        drawMuteBtn(2);
+                    }
+                    else {
+                        drawMuteBtn(1);
+                    }
+                    drawMetadata();
+                    drawAlbumart();
+                }
+            }
+            
+            // Cancel Changes
+            if ((x > RIGHTBUTTON_X) && (x < (RIGHTBUTTON_X + RIGHTBUTTON_W)))
+            {
+                if ((y > RIGHTBUTTON_Y) && (y <= (RIGHTBUTTON_Y + RIGHTBUTTON_H)))
+                {
+                    // Reload main metadata screen
+                    activeScreen = "metadata";
+                    metadata_refresh = true;
+                    updateMute1 = true;
+                    updateMute2 = true;
+                    updateAlbumart = true;
+                    updateVol1 = true;
+                    updateVol2 = true;
+                    currentSourceOffset = 0;
+
+                    clearMainArea();
+                    if (amplipiZone2Enabled) {
+                        drawMuteBtn(1);
+                        drawMuteBtn(2);
+                    }
+                    else {
+                        drawMuteBtn(1);
+                    }
+                    drawMetadata();
+                    drawAlbumart();
+                }
+            }
+            delay(200); // Debounce
         }
     }
 
-    static const unsigned long REFRESH_INTERVAL = 5000; // ms
+    // Metadata refresh loop
     static unsigned long lastRefreshTime = 0;
-
     if (millis() - lastRefreshTime >= REFRESH_INTERVAL)
     {
         if (metadata_refresh) {
             Serial.println("Refreshing metadata");
-            getStream(amplipiSource);
             getZone();
+            getStream(String(amplipiSource));
         }
         lastRefreshTime += REFRESH_INTERVAL;
     }
