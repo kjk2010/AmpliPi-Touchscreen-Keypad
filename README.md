@@ -1,12 +1,14 @@
-# AmpliPi-Touchscreen-Keypad
-A touchscreen keypad designed to control AmpliPi.
+# AmpliPi-Touchscreen-Keypad (WiFi)
+A touchscreen keypad designed to control AmpliPi, using an ESP32 and WiFi.
+
+For the POE-powered version, go to this repo: https://github.com/kjk2010/AmpliPi-POE-Touchscreen-Keypad
 
 Currently a work in progress.
 
 Built using VS Code with Platform.IO.
 
 #### Currently supported hardware
-- Olimex ESP32-PoE, or other ESP32 dev board
+- ESP32 dev board
 - ILI9341 compatible 320x240 TFT touchscreen
 
 #### Basic setup instructions
@@ -26,8 +28,9 @@ Built using VS Code with Platform.IO.
 ![alt text](https://github.com/kjk2010/AmpliPi-Touchscreen-Keypad/blob/main/docs/ESP32-to-TFT-pin-assignment.jpg?raw=true)
 
 4. Upload to ESP32
-5. Upload Filesystem Image to ESP32 (this uploads files in the data folder to the ESP32's file system)
+5. Upload Filesystem Image to ESP32 (this uploads the files in the data folder to the ESP32's file system)
 
+Note: Some screens can't be reliably powered via the board's 3.3v pins and instead should be powered from 5v or an external power source.
 
 #### To do items
 - [x] Add WifiManager to configure Wifi AP settings, and move Wifi settings to config file
@@ -38,10 +41,11 @@ Built using VS Code with Platform.IO.
 - [x] Show album art for local inputs
 - [x] Support coontrolling one or two zones
 - [ ] Split display functions from update data functions. Display functions should be drawing everything from memory, and update functions should be updated the data and triggering a draw if data has changed.
+- [ ] Add mDNS resolution support so touchscreen can find amplipi.local
 - [ ] Research storing album art in RAM instead of file system
 - [ ] Add support for stream commands: Play/Pause, Next, Stop, Like
 - [ ] Add local inputs to source selection screen
-- [ ] Add POE and Ethernet capabilities, utilizing Olimex's ESP32-POE board
+- [x] Add POE and Ethernet capabilities, utilizing Olimex's ESP32-POE board - Repo for POE version: https://github.com/kjk2010/AmpliPi-POE-Touchscreen-Keypad
 - [ ] Show configured names for local inputs
 - [ ] Switch to using SSE or WebSockets, whichever AmpliPi server offers, instead of spamming API
 - [ ] Screen time out options (PIR, touch, screensaver showing full screen only metadata?)

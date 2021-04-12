@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "FS.h"
 #include "SPIFFS.h"
-#include "Free_Fonts.h"
+#include <Free_Fonts.h>
 #include <esp_wifi.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -16,7 +16,7 @@ WiFiMulti wifiMulti;
 #include <TFT_eSPI.h> // Hardware-specific library
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-
+#include <mDNSresolve.h>
 
 /* Debug options */
 #define DEBUGAPIREQ false
@@ -335,24 +335,28 @@ bool loadFileFSConfigFile()
 
         if ( deserializeError )
         {
-          Serial.println(F("failed"));
-          return false;
+            Serial.println(F("failed"));
+            return false;
         }
         else
         {
-          Serial.println(F("OK"));
+            Serial.println(F("OK"));
 
-          if (json["amplipiHost"])
-            strncpy(amplipiHost,  json["amplipiHost"],  sizeof(amplipiHost));
-         
-          if (json["amplipiZone1"])
-            strncpy(amplipiZone1, json["amplipiZone1"], sizeof(amplipiZone1));
- 
-          if (json["amplipiZone2"])
-            strncpy(amplipiZone2, json["amplipiZone2"], sizeof(amplipiZone2));
- 
-          if (json["amplipiSource"])
-            strncpy(amplipiSource, json["amplipiSource"], sizeof(amplipiSource));
+            if (json["amplipiHost"]) {
+                // Check to see if IP or DNS
+
+                // If DNS, look up via MDNS: findMDNS(String mDnsHost)
+                strncpy(amplipiHost,  json["amplipiHost"],  sizeof(amplipiHost));
+            }
+            
+            if (json["amplipiZone1"])
+                strncpy(amplipiZone1, json["amplipiZone1"], sizeof(amplipiZone1));
+    
+            if (json["amplipiZone2"])
+                strncpy(amplipiZone2, json["amplipiZone2"], sizeof(amplipiZone2));
+    
+            if (json["amplipiSource"])
+                strncpy(amplipiSource, json["amplipiSource"], sizeof(amplipiSource));
         }
 
         //serializeJson(json, Serial);
@@ -400,32 +404,6 @@ bool saveFileFSConfigFile()
   return true;
 }
 
-void toggleLED()
-{
-  //toggle state
-  digitalWrite(PIN_LED, !digitalRead(PIN_LED));
-}
-
-void heartBeatPrint()
-{
-  static int num = 1;
-
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.print(F("H"));        // H means connected to WiFi
-  else
-    Serial.print(F("F"));        // F means not connected to WiFi
-
-  if (num == 80)
-  {
-    Serial.println();
-    num = 1;
-  }
-  else if (num++ % 10 == 0)
-  {
-    Serial.print(F(" "));
-  }
-}
-
 void check_WiFi()
 {
   if ( (WiFi.status() != WL_CONNECTED) )
@@ -438,14 +416,11 @@ void check_WiFi()
 void check_status()
 {
   static ulong checkstatus_timeout  = 0;
-  static ulong LEDstatus_timeout    = 0;
   static ulong checkwifi_timeout    = 0;
 
   static ulong current_millis;
 
 #define WIFICHECK_INTERVAL    1000L
-#define LED_INTERVAL          2000L
-#define HEARTBEAT_INTERVAL    10000L
 
   current_millis = millis();
   
@@ -454,20 +429,6 @@ void check_status()
   {
     check_WiFi();
     checkwifi_timeout = current_millis + WIFICHECK_INTERVAL;
-  }
-
-  if ((current_millis > LEDstatus_timeout) || (LEDstatus_timeout == 0))
-  {
-    // Toggle LED at LED_INTERVAL = 2s
-    toggleLED();
-    LEDstatus_timeout = current_millis + LED_INTERVAL;
-  }
-
-  // Print hearbeat every HEARTBEAT_INTERVAL (10) seconds.
-  if ((current_millis > checkstatus_timeout) || (checkstatus_timeout == 0))
-  {
-    heartBeatPrint();
-    checkstatus_timeout = current_millis + HEARTBEAT_INTERVAL;
   }
 }
 
@@ -557,10 +518,12 @@ void touch_calibrate()
     {
         // calibration data valid
         tft.setTouch(calData);
+        Serial.println("Touch screen calibrated");
     }
     else
     {
         // data not valid so recalibrate
+        Serial.println("Entering touch screen calibration...");
         tft.fillScreen(TFT_BLACK);
         tft.setCursor(20, 20);
         tft.setFreeFont(FSS12);
@@ -1670,10 +1633,11 @@ void getStream(String sourceID)
 void setup(void)
 {
     Serial.begin(115200);
-    Serial.println("System Startup");
+    Serial.println("AmpliPi System Startup");
 
     // Initialize screen
     tft.init();
+    Serial.println("Screen initialized");
 
     // Set the rotation before we calibrate
     tft.setRotation(0);
